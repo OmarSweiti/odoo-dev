@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Tree view for Internal Approval Request -->
+    <record id="view_internal_approval_request_tree" model="ir.ui.view">
+        <field name="name">internal.approval.request.tree</field>
+        <field name="model">internal.approval.request</field>
+        <field name="arch" type="xml">
+            <tree decoration-info="state == 'draft'" 
+                  decoration-warning="state == 'to_approve'"
+                  decoration-success="state == 'approved'"
+                  decoration-danger="state == 'rejected'">
+                <field name="reference"/>
+                <field name="source_location_id"/>
+                <field name="dest_location_id"/>
+                <field name="requester_id"/>
+                <field name="state" widget="badge" decoration-info="state == 'draft'"
+                        decoration-warning="state == 'to_approve'"
+                        decoration-success="state == 'approved'"
+                        decoration-danger="state == 'rejected'"/>
+                <field name="create_date"/>
+                <field name="approver_id"/>
+            </tree>
+        </field>
+    </record>
+
+    <!-- Form view for Internal Approval Request -->
+    <record id="view_internal_approval_request_form" model="ir.ui.view">
+        <field name="name">internal.approval.request.form</field>
+        <field name="model">internal.approval.request</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <!-- Draft state buttons -->
+                    <button name="action_submit_for_approval" 
+                            string="Submit for Approval" 
+                            type="object" 
+                            class="oe_highlight"
+                            attrs="{'invisible': [('state', '!=', 'draft')]}"/>
+                    
+                    <!-- To Approve state buttons -->
+                    <button name="action_approve" 
+                            string="Approve" 
+                            type="object" 
+                            class="oe_highlight"
+                            attrs="{'invisible': [('state', '!=', 'to_approve')]}"/>
+                    
+                    <button name="action_reject" 
+                            string="Reject" 
+                            type="object" 
+                            attrs="{'invisible': [('state', '!=', 'to_approve')]}"/>
+                    
+                    <!-- Rejected state - allow reset -->
+                    <button name="action_reset_to_draft" 
+                            string="Reset to Draft" 
+                            type="object" 
+                            attrs="{'invisible': [('state', 'not in', ('rejected',))]}"/>
+                    
+                    <!-- State display -->
+                    <field name="state" widget="statusbar" 
+                            statusbar_visible="draft,to_approve,approved,rejected"/>
+                </header>
+                
+                <sheet>
+                    <div class="oe_title">
+                        <h1>
+                            <field name="reference" readonly="1"/>
+                        </h1>
+                    </div>
+                    
+                    <group>
+                        <group>
+                            <field name="source_location_id" 
+                                    attrs="{'readonly': [('state', '!=', 'draft')]}"/>
+                            <field name="dest_location_id" 
+                                    attrs="{'readonly': [('state', '!=', 'draft')]}"/>
+                        </group>
+                        <group>
+                            <field name="requester_id" readonly="1"/>
+                            <field name="company_id" readonly="1"/>
+                        </group>
+                    </group>
+                    
+                    <group string="Approval Information" 
+                           attrs="{'invisible': [('state', '=', 'draft')]}">
+                        <group>
+                            <field name="approver_id" readonly="1"/>
+                            <field name="approval_date" readonly="1"/>
+                        </group>
+                        <group attrs="{'invisible': [('state', '!=', 'rejected')]}">
+                            <field name="rejection_reason" readonly="1"/>
+                        </group>
+                    </group>
+                    
+                    <group string="Notes">
+                        <field name="note" placeholder="Add notes about this transfer..." 
+                               attrs="{'readonly': [('state', '!=', 'draft')]}"/>
+                    </group>
+                    
+                    <group string="Stock Transfer" 
+                           attrs="{'invisible': [('picking_id', '=', False)]}">
+                        <field name="picking_id" readonly="1" 
+                               options="{'open': True}"/>
+                    </group>
+                </sheet>
+                
+                <div class="oe_chatter">
+                    <field name="message_ids" widget="mail_thread"/>
+                    <field name="activity_ids" widget="mail_activity"/>
+                </div>
+            </form>
+        </field>
+    </record>
+
+    <!-- Search view for Internal Approval Request -->
+    <record id="view_internal_approval_request_search" model="ir.ui.view">
+        <field name="name">internal.approval.request.search</field>
+        <field name="model">internal.approval.request</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="reference"/>
+                <field name="source_location_id"/>
+                <field name="dest_location_id"/>
+                <field name="requester_id"/>
+                <field name="approver_id"/>
+                <filter string="Draft" name="draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="To Approve" name="to_approve" domain="[('state', '=', 'to_approve')]"/>
+                <filter string="Approved" name="approved" domain="[('state', '=', 'approved')]"/>
+                <filter string="Rejected" name="rejected" domain="[('state', '=', 'rejected')]"/>
+                <filter string="My Requests" name="my_requests" domain="[('requester_id', '=', uid)]"/>
+                <separator/>
+                <group expand="0" string="Group By">
+                    <filter string="State" name="group_by_state" domain="[]" context="{'group_by': 'state'}"/>
+                    <filter string="Requester" name="group_by_requester" domain="[]" context="{'group_by': 'requester_id'}"/>
+                    <filter string="Source Location" name="group_by_source_location" domain="[]" context="{'group_by': 'source_location_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- Action window for Internal Approval Request -->
+    <record id="action_internal_approval_request" model="ir.actions.act_window">
+        <field name="name">Transfer Approvals</field>
+        <field name="res_model">internal.approval.request</field>
+        <field name="view_mode">tree,form</field>
+        <field name="search_view_id" ref="view_internal_approval_request_search"/>
+        <field name="help" type="html">
+            <p class="oe_view_nocontent_create">
+                Click to create a new transfer approval request.
+            </p>
+            <p>
+                Transfer approval requests allow you to request approval
+                for internal transfers before they are executed in the system.
+            </p>
+        </field>
+    </record>
+
+    <!-- Menu item for Internal Approval Request -->
+    <menuitem 
+        id="menu_internal_approval_request"
+        name="Transfer Approvals"
+        parent="stock.menu_stock_root"
+        action="action_internal_approval_request"
+        sequence="50"
+        groups="base.group_user"/>
+</odoo>

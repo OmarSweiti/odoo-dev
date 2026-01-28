@@ -1,0 +1,6 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_pos_hospitality_expense_user,POS Hospitality Expense User,model_pos_hospitality_expense,hospitality_pos_expense.group_hospitality_pos,1,0,1,0
+access_pos_hospitality_expense_manager,POS Hospitality Expense Manager,model_pos_hospitality_expense,base.group_system,1,1,1,1
+access_pos_hospitality_expense_line_user,POS Hospitality Expense Line User,model_pos_hospitality_expense_line,hospitality_pos_expense.group_hospitality_pos,1,0,1,0
+access_pos_hospitality_expense_line_manager,POS Hospitality Expense Line Manager,model_pos_hospitality_expense_line,base.group_system,1,1,1,1
+
