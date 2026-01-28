@@ -2,4 +2,7 @@ id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_internal_approval_user,Internal Approval User,model_internal_approval_request,internal_transfer_approval.group_approval_user,1,0,1,0
 access_internal_approval_manager,Internal Approval Manager,model_internal_approval_request,internal_transfer_approval.group_approval_manager,1,1,1,1
 access_internal_approval_admin,Internal Approval Admin,model_internal_approval_request,base.group_system,1,1,1,1
+access_internal_approval_line_user,Internal Approval Line User,model_internal_approval_request_line,internal_transfer_approval.group_approval_user,1,0,1,0
+access_internal_approval_line_manager,Internal Approval Line Manager,model_internal_approval_request_line,internal_transfer_approval.group_approval_manager,1,1,1,1
+access_internal_approval_line_admin,Internal Approval Line Admin,model_internal_approval_request_line,base.group_system,1,1,1,1
 

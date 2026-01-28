@@ -23,12 +23,14 @@ Features:
         'stock',
         'mail',
         'web',
+        'account',
     ],
     'data': [
         'security/security.xml',
         'security/ir.model.access.csv',
         'data/ir_sequence.xml',
         'data/stock_location.xml',
+        'data/account_data.xml',
         'views/pos_hospitality_views.xml',
     ],
     'assets': {

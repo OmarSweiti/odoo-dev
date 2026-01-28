@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Hospitality Expense Account Configuration -->
+    
+    <!-- Hospitality Expense Account -->
+    <record id="account_hospitality_expense" model="account.account">
+        <field name="name">Hospitality Expense</field>
+        <field name="code">610500</field>
+        <field name="account_type">expense</field>
+        <field name="reconcile">False</field>
+    </record>
+</odoo>

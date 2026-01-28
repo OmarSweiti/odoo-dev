@@ -19,6 +19,69 @@ import logging
 _logger = logging.getLogger(__name__)
 
 
+class InternalApprovalRequestLine(models.Model):
+    """
+    Model for internal transfer approval request line items.
+    Contains the products and quantities to be transferred.
+    """
+    
+    _name = "internal.approval.request.line"
+    _description = "Internal Transfer Approval Line"
+    _order = "sequence, id"
+    
+    sequence = fields.Integer(
+        string="Sequence",
+        default=10,
+        help="Sequence for ordering the lines"
+    )
+    request_id = fields.Many2one(
+        'internal.approval.request',
+        string="Request",
+        required=True,
+        ondelete='cascade',
+        index=True
+    )
+    product_id = fields.Many2one(
+        'product.product',
+        string="Product",
+        required=True,
+        ondelete='restrict',
+        domain="[('type', 'in', ['product', 'consu'])]"
+    )
+    product_uom_id = fields.Many2one(
+        'uom.uom',
+        string="Unit of Measure",
+        required=True,
+        ondelete='restrict'
+    )
+    quantity = fields.Float(
+        string="Quantity",
+        required=True,
+        default=1.0,
+        digits='Product Unit of Measure',
+        help="Quantity to transfer"
+    )
+    product_tmpl_id = fields.Many2one(
+        'product.template',
+        string="Product Template",
+        related='product_id.product_tmpl_id',
+        readonly=True
+    )
+    
+    @api.onchange('product_id')
+    def _onchange_product_id(self):
+        """Set default UoM when product changes."""
+        if self.product_id:
+            self.product_uom_id = self.product_id.uom_id.id
+    
+    @api.constrains('quantity')
+    def _check_quantity_positive(self):
+        """Ensure quantity is positive."""
+        for line in self:
+            if line.quantity <= 0:
+                raise ValidationError(_("Quantity must be greater than zero."))
+
+
 class InternalApprovalRequest(models.Model):
     """
     Model for handling internal transfer approval requests.
@@ -108,6 +171,20 @@ class InternalApprovalRequest(models.Model):
         readonly=True,
         default=lambda self: self.env.company
     )
+    line_ids = fields.One2many(
+        'internal.approval.request.line',
+        'request_id',
+        string="Products",
+        copy=True,
+        help="Products to be transferred"
+    )
+    request_state = fields.Selection(
+        STATE_SELECTION,
+        string="Request State",
+        related='state',
+        readonly=True,
+        store=True
+    )
     
     @api.model
     def create(self, vals):
@@ -132,11 +209,18 @@ class InternalApprovalRequest(models.Model):
         
         Returns:
             bool: True if successful
+            
+        Raises:
+            UserError: If no products are added or state is not draft
         """
         for request in self:
             if request.state != 'draft':
                 raise UserError(_(
                     "Only draft requests can be submitted for approval."
+                ))
+            if not request.line_ids:
+                raise UserError(_(
+                    "Please add at least one product to transfer."
                 ))
             request.write({
                 'state': 'to_approve',
@@ -158,7 +242,7 @@ class InternalApprovalRequest(models.Model):
                     "Only requests waiting for approval can be approved."
                 ))
             
-            # Create the stock picking
+            # Create the stock picking with move lines
             picking = request._create_stock_picking()
             
             # Update the request
@@ -241,6 +325,9 @@ class InternalApprovalRequest(models.Model):
         """
         Create the stock picking for the approved transfer.
         
+        Creates the picking along with stock moves and move lines
+        based on the approval request lines.
+        
         Returns:
             Recordset: The created stock.picking record
         """
@@ -271,9 +358,36 @@ class InternalApprovalRequest(models.Model):
         
         picking = self.env['stock.picking'].create(picking_vals)
         
+        # Create stock moves for each line
+        for line in self.line_ids:
+            move_vals = {
+                'name': line.product_id.display_name,
+                'product_id': line.product_id.id,
+                'product_uom_qty': line.quantity,
+                'product_uom': line.product_uom_id.id,
+                'location_id': self.source_location_id.id,
+                'location_dest_id': self.dest_location_id.id,
+                'picking_id': picking.id,
+                'company_id': self.company_id.id,
+            }
+            move = self.env['stock.move'].create(move_vals)
+            
+            # Create stock move line for immediate transfer
+            self.env['stock.move.line'].create({
+                'move_id': move.id,
+                'product_id': line.product_id.id,
+                'product_uom_id': line.product_uom_id.id,
+                'location_id': self.source_location_id.id,
+                'location_dest_id': self.dest_location_id.id,
+                'picking_id': picking.id,
+                'qty_done': line.quantity,
+                'company_id': self.company_id.id,
+            })
+        
+        # Log the creation
         _logger.info(
-            "Stock picking %s created from approval request %s",
-            picking.name, self.reference
+            "Stock picking %s created from approval request %s with %d moves",
+            picking.name, self.reference, len(self.line_ids)
         )
         
         return picking
@@ -296,10 +410,11 @@ class InternalApprovalRequest(models.Model):
                 summary=_("Transfer Approval Required"),
                 note=_(
                     "New transfer request %s requires your approval.\n"
-                    "From: %s\nTo: %s",
+                    "From: %s\nTo: %s\nProducts: %d items",
                     self.reference,
                     self.source_location_id.display_name,
-                    self.dest_location_id.display_name
+                    self.dest_location_id.display_name,
+                    len(self.line_ids)
                 ),
             )
     
@@ -326,4 +441,36 @@ class InternalApprovalRequest(models.Model):
             display_name = f"{request.reference} ({dict(request.STATE_SELECTION).get(request.state, request.state)})"
             result.append((request.id, display_name))
         return result
+    
+    def action_view_picking(self):
+        """
+        Open the associated stock picking.
+        
+        Returns:
+            dict: Window action to open the picking
+        """
+        self.ensure_one()
+        return {
+            'type': 'ir.actions.act_window',
+            'res_model': 'stock.picking',
+            'view_mode': 'form',
+            'res_id': self.picking_id.id,
+            'target': 'current',
+        }
+    
+    def action_add_products(self):
+        """
+        Open a wizard to add products to the transfer.
+        
+        Returns:
+            dict: Window action to open product selection wizard
+        """
+        self.ensure_one()
+        return {
+            'type': 'ir.actions.act_window',
+            'res_model': 'internal.approval.request.line',
+            'view_mode': 'tree,form',
+            'domain': [('request_id', '=', self.id)],
+            'target': 'current',
+        }
 

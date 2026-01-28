@@ -91,6 +91,38 @@
                         </group>
                     </group>
                     
+                    <!-- Products Lines Section -->
+                    <group string="Products to Transfer" 
+                           attrs="{'invisible': [('state', 'not in', ('draft', 'to_approve'))]}">
+                        <field name="line_ids" nolabel="1">
+                            <tree editable="bottom">
+                                <field name="sequence" invisible="1"/>
+                                <field name="product_id" attrs="{'readonly': [('parent.state', '!=', 'draft')]}"/>
+                                <field name="product_uom_id" string="UoM" attrs="{'readonly': [('parent.state', '!=', 'draft')]}"/>
+                                <field name="quantity" attrs="{'readonly': [('parent.state', '!=', 'draft')]}"/>
+                            </tree>
+                            <form>
+                                <group>
+                                    <field name="product_id"/>
+                                    <field name="product_uom_id"/>
+                                    <field name="quantity"/>
+                                </group>
+                            </form>
+                        </field>
+                    </group>
+                    
+                    <!-- View Products for approved/rejected requests -->
+                    <group string="Products Transferred" 
+                           attrs="{'invisible': [('state', 'in', ('draft', 'to_approve'))]}">
+                        <field name="line_ids" nolabel="1" readonly="1">
+                            <tree>
+                                <field name="product_id"/>
+                                <field name="product_uom_id" string="UoM"/>
+                                <field name="quantity"/>
+                            </tree>
+                        </field>
+                    </group>
+                    
                     <group string="Notes">
                         <field name="note" placeholder="Add notes about this transfer..." 
                                attrs="{'readonly': [('state', '!=', 'draft')]}"/>
@@ -154,7 +186,7 @@
         </field>
     </record>
 
-    <!-- Menu item for Internal Approval Request -->
+    <!-- Menu item for Internal Approval Request under Inventory -->
     <menuitem 
         id="menu_internal_approval_request"
         name="Transfer Approvals"

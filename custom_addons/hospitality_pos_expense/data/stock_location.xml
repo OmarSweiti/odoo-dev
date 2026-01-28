@@ -1,6 +1,30 @@
 <odoo>
-    <record id="location_inventory_loss_hospitality" model="stock.location">
+    <!-- Virtual Inventory Loss location for Hospitality Expenses -->
+    
+    <!-- Inventory Loss location for hospitality expenses -->
+    <!-- forcecreate="False" ensures this record is only created once and never updated -->
+    <!-- This prevents the 'Changing the company of this record is forbidden' error -->
+    <!-- during module upgrades, as company_id cannot be changed after creation -->
+    <record id="location_inventory_loss_hospitality" model="stock.location" forcecreate="False">
         <field name="name">Inventory Loss (Hospitality)</field>
         <field name="usage">inventory</field>
+        <!-- company_id is intentionally not set here to allow global (all companies) access -->
+        <!-- If company_id is needed, it must be set at creation time only -->
+        <field name="barcode">INV_LOSS_HOSP</field>
+        <field name="comment">Virtual location for recording hospitality expenses (employee meals).
+Products moved here are deducted from inventory and expensed.</field>
+    </record>
+
+    <!-- Stock Picking Type for Hospitality Transfers -->
+    <!-- forcecreate="False" prevents updates during upgrades -->
+    <!-- company_id must reference a valid company (cannot be NULL) -->
+    <!-- warehouse_id is linked to main warehouse; picking type will work for any warehouse -->
+    <record id="picking_type_hospitality" model="stock.picking.type" forcecreate="False">
+        <field name="name">Hospitality Transfer</field>
+        <field name="code">internal</field>
+        <field name="sequence_code">HSP</field>
+        <field name="company_id" ref="base.main_company"/>
+        <!-- warehouse_id is False to allow this picking type to be used with any warehouse -->
+        <field name="warehouse_id" eval="False"/>
     </record>
 </odoo>

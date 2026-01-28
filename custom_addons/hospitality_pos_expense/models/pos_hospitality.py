@@ -60,6 +60,16 @@ class PosHospitalityExpense(models.Model):
         ('draft', 'Draft'),
         ('done', 'Completed'),
     ], default='draft', readonly=True, string="Status")
+    company_id = fields.Many2one(
+        'res.company',
+        string="Company",
+        readonly=True,
+        default=lambda self: self.env.company
+    )
+    note = fields.Text(
+        string="Notes",
+        help="Additional notes for this hospitality expense"
+    )
     
     @api.model
     def create(self, vals):
@@ -115,22 +125,50 @@ class PosHospitalityExpense(models.Model):
         Returns:
             Recordset: The inventory loss location for hospitality
         """
+        # First try to get the location from our module's XML ID
         location = self.env.ref(
             'hospitality_pos_expense.location_inventory_loss_hospitality',
             raise_if_not_found=False
         )
-        if not location:
-            # Fallback: search for inventory loss type location
-            location = self.env['stock.location'].search([
-                ('usage', '=', 'inventory'),
-                ('name', 'ilike', 'Inventory Loss')
-            ], limit=1)
-        if not location:
-            raise UserError(_(
-                "Inventory Loss location not found. "
-                "Please create a location with usage 'Inventory Loss'."
-            ))
-        return location
+        if location:
+            return location
+        
+        # Fallback 1: Search for our location by name
+        location = self.env['stock.location'].search([
+            ('name', '=', 'Inventory Loss (Hospitality)'),
+            ('usage', '=', 'inventory'),
+        ], limit=1)
+        if location:
+            return location
+        
+        # Fallback 2: Search for any inventory loss type location
+        location = self.env['stock.location'].search([
+            ('name', 'ilike', 'Inventory Loss'),
+            ('usage', '=', 'inventory'),
+        ], limit=1)
+        if location:
+            return location
+        
+        # Fallback 3: Search for virtual locations
+        location = self.env['stock.location'].search([
+            ('usage', '=', 'view'),
+            ('name', 'ilike', 'Virtual'),
+        ], limit=1)
+        if location:
+            # Create a child location under Virtual Locations
+            location = self.env['stock.location'].create({
+                'name': 'Inventory Loss (Hospitality)',
+                'usage': 'inventory',
+                'location_id': location.id,
+                'company_id': self.env.company.id,
+                'barcode': 'INV_LOSS_HOSP',
+            })
+            return location
+        
+        raise UserError(_(
+            "No suitable location found. Please create a location with "
+            "usage 'Inventory Loss' or 'Virtual' for hospitality expenses."
+        ))
     
     @api.model
     def create_hospitality_transfer(self, lines, employee_name):
@@ -189,12 +227,13 @@ class PosHospitalityExpense(models.Model):
                     emp=employee_name.strip(),
                     ref=expense.reference
                 ),
+                'company_id': self.env.company.id,
             })
             
             # Update expense with picking reference
             expense.write({'picking_id': picking.id})
             
-            # Create stock moves for each line
+            # Create stock moves and expense lines for each product
             for idx, line in enumerate(lines):
                 product_id = line.get('product_id')
                 qty = line.get('qty', 1.0)
@@ -218,7 +257,7 @@ class PosHospitalityExpense(models.Model):
                     uom = product.uom_id
                 
                 # Create stock move
-                self.env['stock.move'].create({
+                move = self.env['stock.move'].create({
                     'name': name or product.display_name,
                     'product_id': product_id,
                     'product_uom_qty': qty,
@@ -226,6 +265,7 @@ class PosHospitalityExpense(models.Model):
                     'location_id': source_location.id,
                     'location_dest_id': dest_location.id,
                     'picking_id': picking.id,
+                    'company_id': self.env.company.id,
                 })
                 
                 # Create expense line
@@ -240,10 +280,21 @@ class PosHospitalityExpense(models.Model):
             picking.action_confirm()
             picking.action_assign()
             
-            # Check if all moves are available
+            # Create stock move lines for each move (immediate transfer)
             for move in picking.move_ids:
-                if move.state == 'confirmed':
-                    move.force_assign()
+                if move.state in ('confirmed', 'assigned'):
+                    move.quantity_done = move.product_uom_qty
+                    # Create move line with the full quantity
+                    self.env['stock.move.line'].create({
+                        'move_id': move.id,
+                        'product_id': move.product_id.id,
+                        'product_uom_id': move.product_uom.id,
+                        'location_id': move.location_id.id,
+                        'location_dest_id': move.location_dest_id.id,
+                        'picking_id': move.picking_id.id,
+                        'qty_done': move.product_uom_qty,
+                        'company_id': move.company_id.id,
+                    })
             
             # Validate the picking (auto-assign if not done)
             picking.button_validate()
@@ -276,6 +327,22 @@ class PosHospitalityExpense(models.Model):
                 "An error occurred while creating the hospitality expense: %s",
                 str(e)
             ))
+    
+    def action_view_picking(self):
+        """
+        Open the associated stock picking.
+        
+        Returns:
+            dict: Window action to open the picking
+        """
+        self.ensure_one()
+        return {
+            'type': 'ir.actions.act_window',
+            'res_model': 'stock.picking',
+            'view_mode': 'form',
+            'res_id': self.picking_id.id,
+            'target': 'current',
+        }
 
 
 class PosHospitalityExpenseLine(models.Model):
@@ -312,10 +379,33 @@ class PosHospitalityExpenseLine(models.Model):
         default=1.0,
         digits='Product Unit of Measure'
     )
+    product_tmpl_id = fields.Many2one(
+        'product.template',
+        string="Product Template",
+        related='product_id.product_tmpl_id',
+        readonly=True
+    )
+    standard_price = fields.Float(
+        string="Standard Cost",
+        related='product_id.standard_price',
+        readonly=True
+    )
     
     @api.onchange('product_id')
     def _onchange_product_id(self):
         """Set default UoM when product changes."""
         if self.product_id and not self.product_uom_id:
             self.product_uom_id = self.product_id.uom_id.id
+    
+    @api.depends('quantity', 'standard_price')
+    def _compute_total_cost(self):
+        """Calculate total cost for the line."""
+        for line in self:
+            line.total_cost = line.quantity * line.standard_price
+    
+    total_cost = fields.Float(
+        string="Total Cost",
+        compute='_compute_total_cost',
+        store=False
+    )
 
