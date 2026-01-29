@@ -1,5 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
+    <!-- Model XML IDs for Record Rules -->
+    <record id="model_pos_hospitality_expense" model="ir.model">
+        <field name="model">pos.hospitality.expense</field>
+        <field name="name">POS Hospitality Expense</field>
+    </record>
+    
+    <record id="model_pos_hospitality_expense_line" model="ir.model">
+        <field name="model">pos.hospitality.expense.line</field>
+        <field name="name">POS Hospitality Expense Line</field>
+    </record>
+
     <!-- Security group for POS Hospitality Expense -->
     <record id="group_hospitality_pos" model="res.groups">
         <field name="name">Hospitality POS Access</field>
@@ -18,6 +29,21 @@
     <record id="rule_hospitality_expense_manager" model="ir.rule">
         <field name="name">Hospitality Expense Manager Rule</field>
         <field name="model_id" ref="model_pos_hospitality_expense"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('base.group_system'))]"/>
+    </record>
+
+    <!-- Record rules for the hospitality expense line model -->
+    <record id="rule_hospitality_expense_line_user" model="ir.rule">
+        <field name="name">Hospitality Expense Line User Rule</field>
+        <field name="model_id" ref="model_pos_hospitality_expense_line"/>
+        <field name="domain_force">[('expense_id.create_uid', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('group_hospitality_pos'))]"/>
+    </record>
+
+    <record id="rule_hospitality_expense_line_manager" model="ir.rule">
+        <field name="name">Hospitality Expense Line Manager Rule</field>
+        <field name="model_id" ref="model_pos_hospitality_expense_line"/>
         <field name="domain_force">[(1, '=', 1)]</field>
         <field name="groups" eval="[(4, ref('base.group_system'))]"/>
     </record>

@@ -11,6 +11,7 @@ Features:
 - Records employee names with each transfer
 - Controlled by access rights (group-based)
 - No sales invoice generated
+- Automatic accounting entries in Hospitality Expense account
 """
 
 from odoo import models, api, fields, _
@@ -69,6 +70,13 @@ class PosHospitalityExpense(models.Model):
     note = fields.Text(
         string="Notes",
         help="Additional notes for this hospitality expense"
+    )
+    account_move_id = fields.Many2one(
+        'account.move',
+        string="Journal Entry",
+        readonly=True,
+        copy=False,
+        help="The accounting journal entry created for this expense"
     )
     
     @api.model
@@ -170,6 +178,153 @@ class PosHospitalityExpense(models.Model):
             "usage 'Inventory Loss' or 'Virtual' for hospitality expenses."
         ))
     
+    def _get_hospitality_expense_account(self):
+        """
+        Get the Hospitality Expense account.
+        
+        Returns:
+            Recordset: The account.account record for hospitality expenses
+        """
+        account = self.env.ref(
+            'hospitality_pos_expense.account_hospitality_expense',
+            raise_if_not_found=False
+        )
+        if account:
+            return account
+        
+        # Fallback: Search by code
+        account = self.env['account.account'].search([
+            ('code', '=', '610500'),
+            ('company_id', '=', self.env.company.id),
+        ], limit=1)
+        if account:
+            return account
+        
+        # Fallback: Search by name
+        account = self.env['account.account'].search([
+            ('name', 'ilike', 'Hospitality Expense'),
+            ('company_id', '=', self.env.company.id),
+        ], limit=1)
+        if account:
+            return account
+        
+        raise UserError(_(
+            "Hospitality Expense account not found. "
+            "Please configure account 610500 or create an account named 'Hospitality Expense'."
+        ))
+    
+    def _get_stock_input_account(self, product):
+        """
+        Get the stock input account for the product.
+        
+        Args:
+            product: The product.product record
+            
+        Returns:
+            Recordset: The stock input account
+        """
+        # Get the stock valuation account from product
+        if product.categ_id.property_stock_valuation_account_id:
+            return product.categ_id.property_stock_valuation_account_id
+        
+        # Fallback to default accounts
+        if product.categ_id.property_stock_account_input_categ_id:
+            return product.categ_id.property_stock_account_input_categ_id
+        
+        # Search for stock input account
+        accounts = self.env['account.account'].search([
+            ('code', 'like', '14%'),
+            ('company_id', '=', self.env.company.id),
+        ], limit=1)
+        if accounts:
+            return accounts
+        
+        raise UserError(_(
+            "Stock valuation account not found for product %s. "
+            "Please configure product category accounts.",
+            product.display_name
+        ))
+    
+    def _create_account_moves(self, expense, picking):
+        """
+        Create accounting journal entries for the hospitality expense.
+        
+        Creates:
+        - Credit entry to stock valuation (removing inventory value)
+        - Debit entry to hospitality expense account
+        
+        Args:
+            expense: The hospitality expense record
+            picking: The stock picking record
+            
+        Returns:
+            Recordset: The created account.move record
+        """
+        if not self.env.company.country_id:
+            raise UserError(_("Please set the company country in settings."))
+        
+        move_lines = []
+        total_cost = 0.0
+        
+        # Get expense account
+        expense_account = self._get_hospitality_expense_account()
+        
+        for line in expense.line_ids:
+            product = line.product_id
+            qty = line.quantity
+            cost = line.standard_price * qty
+            total_cost += cost
+            
+            # Get stock valuation account for this product
+            stock_account = self._get_stock_input_account(product)
+            
+            # Create move line for stock valuation (credit)
+            move_lines.append((0, 0, {
+                'name': _("%(product)s - Stock out for hospitality", product=product.display_name),
+                'account_id': stock_account.id,
+                'debit': 0.0,
+                'credit': cost,
+                'product_id': product.id,
+                'quantity': qty,
+                'company_id': self.env.company.id,
+            }))
+            
+            # Create move line for hospitality expense (debit)
+            move_lines.append((0, 0, {
+                'name': _("%(product)s - Hospitality expense for %(employee)s",
+                         product=product.display_name,
+                         employee=expense.employee_name),
+                'account_id': expense_account.id,
+                'debit': cost,
+                'credit': 0.0,
+                'product_id': product.id,
+                'quantity': qty,
+                'company_id': self.env.company.id,
+            }))
+        
+        if not move_lines:
+            return None
+        
+        # Create the journal entry
+        move = self.env['account.move'].create({
+            'move_type': 'entry',
+            'ref': _("%(ref)s - Hospitality expense for %(employee)s",
+                    ref=expense.reference,
+                    employee=expense.employee_name),
+            'journal_id': self.env['account.journal'].search([
+                ('type', '=', 'general'),
+                ('company_id', '=', self.env.company.id),
+            ], limit=1).id,
+            'line_ids': move_lines,
+            'company_id': self.env.company.id,
+            'date': fields.Date.today(),
+        })
+        
+        # Post the move
+        move.action_post()
+        
+        return move
+    
     @api.model
     def create_hospitality_transfer(self, lines, employee_name):
         """
@@ -178,6 +333,7 @@ class PosHospitalityExpense(models.Model):
         This method is called from the POS frontend via RPC. It creates
         a stock picking that moves products from the main warehouse to
         the inventory loss location, recording it as a hospitality expense.
+        It also creates accounting journal entries for cost tracking.
         
         Args:
             lines (list): List of dictionaries containing:
@@ -299,6 +455,11 @@ class PosHospitalityExpense(models.Model):
             # Validate the picking (auto-assign if not done)
             picking.button_validate()
             
+            # Create accounting journal entries for the expense
+            move = self._create_account_moves(expense, picking)
+            if move:
+                expense.write({'account_move_id': move.id})
+            
             # Mark expense as done
             expense.write({'state': 'done'})
             
@@ -341,6 +502,24 @@ class PosHospitalityExpense(models.Model):
             'res_model': 'stock.picking',
             'view_mode': 'form',
             'res_id': self.picking_id.id,
+            'target': 'current',
+        }
+    
+    def action_view_journal_entry(self):
+        """
+        Open the associated journal entry.
+        
+        Returns:
+            dict: Window action to open the journal entry
+        """
+        self.ensure_one()
+        if not self.account_move_id:
+            raise UserError(_("No journal entry associated with this expense."))
+        return {
+            'type': 'ir.actions.act_window',
+            'res_model': 'account.move',
+            'view_mode': 'form',
+            'res_id': self.account_move_id.id,
             'target': 'current',
         }
 

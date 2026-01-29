@@ -3,11 +3,18 @@
  * 
  * This module adds a hospitality expense button to the POS interface,
  * allowing selected users to record employee meals as expenses instead of sales.
+ * 
+ * Features:
+ * - Button visible only to users with 'hospitality_pos_expense.group_hospitality_pos' group
+ * - Creates internal transfers from main warehouse to Inventory Loss
+ * - Prompts for employee name before processing
+ * - Generates accounting journal entries
+ * - No invoice or sales record is generated
  */
 
 // Import necessary components from Odoo POS
 import { ProductScreen } from "@point_of_sale/app/screens/product_screen/product_screen";
-import { ComponentContainer } from "@point_of_sale/app/components/pos_component";
+import { Component } from "@odoo/owl";
 import { useService } from "@web/core/utils/hooks";
 import { _t } from "@web/core/l10n/translation";
 
@@ -17,15 +24,31 @@ import { _t } from "@web/core/l10n/translation";
  * A POS button that allows cashiers to record hospitality expenses.
  * Only visible to users with the 'hospitality_pos_expense.group_hospitality_pos' group.
  */
-class HospitalityButton extends ComponentContainer {
+class HospitalityButton extends Component {
     /**
      * Setup the component with required services
      */
     setup() {
-        super.setup();
         this.notification = useService("notification");
         this.dialog = useService("dialog");
         this.rpc = useService("rpc");
+        this.action = useService("action");
+    }
+
+    /**
+     * Get the current POS order
+     */
+    get currentOrder() {
+        return this.env.pos.get_order();
+    }
+
+    /**
+     * Check if button should be available
+     * Button is available when there's an active order with products
+     */
+    get isAvailable() {
+        const order = this.currentOrder;
+        return order && order.get_orderlines().length > 0;
     }
 
     /**
@@ -36,6 +59,7 @@ class HospitalityButton extends ComponentContainer {
         try {
             await this.processHospitalityExpense();
         } catch (error) {
+            console.error("Hospitality expense error:", error);
             this.notification.add(
                 error.message || _t("An error occurred while processing the expense."),
                 {
@@ -54,7 +78,7 @@ class HospitalityButton extends ComponentContainer {
      * 4. Create transfer via RPC
      */
     async processHospitalityExpense() {
-        const order = this.env.pos.get_order();
+        const order = this.currentOrder;
         
         if (!order) {
             this.notification.add(
@@ -218,27 +242,52 @@ class HospitalityButton extends ComponentContainer {
     }
 }
 
+// Set template for the component
+HospitalityButton.template = "HospitalityButton";
+
 // Register the button in the Product Screen
 ProductScreen.addControlButton({
     component: HospitalityButton,
     condition: function () {
         // Check if current user has the hospitality group
         try {
-            return this.env.pos.get_cashier().has_group(
-                "hospitality_pos_expense.group_hospitality_pos"
-            );
-        } catch (error) {
-            // Fallback: check user groups directly
-            const user = this.env.pos.user;
-            if (user && user.groups_id) {
-                const groupXmlId = "hospitality_pos_expense.group_hospitality_pos";
-                return user.groups_id.some((g) => g.id === groupXmlId || g[2] === groupXmlId);
+            const cashier = this.env.pos.get_cashier();
+            if (cashier && cashier.has_group) {
+                return cashier.has_group(
+                    "hospitality_pos_expense.group_hospitality_pos"
+                );
             }
-            return false;
+        } catch (error) {
+            console.warn("Error checking group:", error);
         }
+        
+        // Fallback: check user groups directly via the user model
+        const user = this.env.pos.user;
+        if (user && user.groups_id) {
+            // The groups_id might be a list of XML IDs or records
+            const groupXmlId = "hospitality_pos_expense.group_hospitality_pos";
+            
+            // Check if any group matches
+            for (const group of user.groups_id) {
+                // If it's a string (XML ID)
+                if (typeof group === 'string' && group.includes(groupXmlId)) {
+                    return true;
+                }
+                // If it's an array [id, display_name, xml_id]
+                if (Array.isArray(group) && group[2] === groupXmlId) {
+                    return true;
+                }
+                // If it's a record with id
+                if (group.id && typeof group.id === 'string' && group.id.includes(groupXmlId)) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
     },
     isAvailable: function () {
-        // Button is available when there's an active order
+        // Button is available when there's an active order with products
         const order = this.env.pos.get_order();
         return order && order.get_orderlines().length > 0;
     },
